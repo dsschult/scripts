@@ -98,12 +98,13 @@ def run_dag(job):
             tasks = [level]
         while tasks:
             new_tasks = []
-            for i in tasks:
+            def runner(foo):
                 try:
                     yield i()
                 except:
                     logging.warn('error running task', exc_info=True)
                     new_tasks.append(i)
+            yield [runner(i) for i in tasks]
             tasks = new_tasks
 
 
@@ -125,8 +126,15 @@ getenv = True
 output = /dev/null
 error = /dev/null
 log = log
-arguments = %s
-queue %d"""%('--num %d --log_level error'%(args.n%100), args.n//100))
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+transfer_input_files = /tmp/x509up_u21458
+env = X509_USER_PROXY=x509up_u21458
+x509userproxy = /tmp/x509up_u21458
+request_disk = 200000000
+request_machine_token = 1
+arguments = --num 100 --log_level error
+queue %d"""%(args.num//100))
     p.wait()
 
 def main():
