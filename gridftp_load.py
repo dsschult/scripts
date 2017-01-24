@@ -96,16 +96,13 @@ def run_dag(job):
             tasks = list(level)
         else:
             tasks = [level]
-        while tasks:
-            new_tasks = []
-            def runner(foo):
-                try:
-                    yield i()
-                except:
-                    logging.warn('error running task', exc_info=True)
-                    new_tasks.append(i)
-            yield [runner(i) for i in tasks]
-            tasks = new_tasks
+        while True:
+            try:
+                yield [i() for i in tasks]
+            except:
+                logging.warn('error running task', exc_info=True)
+            else:
+                break
 
 
 def run(args):
