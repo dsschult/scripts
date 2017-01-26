@@ -11,6 +11,29 @@ import logging
 import tornado.ioloop
 import tornado.gen
 
+def cksm(filename,type='sha512',buffersize=16384,file=True):
+    """Return checksum of file using algorithm specified"""
+    if type not in ('md5','sha1','sha256','sha512'):
+        raise Exception('cannot get checksum for type %r',type)
+
+    try:
+        digest = getattr(hashlib,type)()
+    except:
+        raise Exception('cannot get checksum for type %r',type)
+
+    if file and os.path.exists(filename):
+        # checksum file contents
+        filed = open(filename)
+        buffer = filed.read(buffersize)
+        while buffer:
+            digest.update(buffer)
+            buffer = filed.read(buffersize)
+        filed.close()
+    else:
+        # just checksum the contents of the first argument
+        digest.update(filename)
+    return digest.hexdigest()
+
 class Cache:
     def __init__(self, server):
         self.server = server
@@ -27,6 +50,9 @@ class Cache:
 
     def download(self, name):
         logging.info('download %s',name)
+        for ending in ('.sha512sum','.sha256sum','.sha1sum','.md5sum'):
+            subprocess.check_call(['globus-url-copy','-rst',os.path.join(self.server,name)+ending,
+                                   'file:'+os.path.join(self.dir,name)+ending])
         subprocess.check_call(['globus-url-copy','-rst',os.path.join(self.server,name),
                                'file:'+os.path.join(self.dir,name)])
 
@@ -34,8 +60,15 @@ class Cache:
         logging.info('upload %s',name)
         fname = os.path.join(self.dir,name)
         subprocess.check_call(['globus-url-copy','-rst','-cd',
-                              'file:'+os.path.join(self.dir,name),
-                              os.path.join(self.server,name)])
+                               'file:'+fname,
+                               os.path.join(self.server,name)])
+        subprocess.check_call(['globus-url-copy','-rst',
+                               os.path.join(self.server,name),
+                               'file:'+fname+'_tmp'])
+        try:
+            if cksm(fname) != cksm(fname+'_tmp')
+        finally:
+            os.remove(fname+'_tmp')
 
     def remove(self, name):
         logging.info('remove %s',name)
@@ -106,7 +139,7 @@ def run_dag(job):
 
 
 def run(args):
-    cache = Cache('gsiftp://dagtemp.icecube.wisc.edu/scratch/iceprod/')
+    cache = Cache('gsiftp://gridftp-scratch.icecube.wisc.edu/local/simprod/')
     ioloop = tornado.ioloop.IOLoop.current()
     for _ in range(args.num):
         ioloop.add_callback(run_dag,Corsika(cache))
@@ -120,8 +153,8 @@ def submit(args):
     p.communicate("""
 executable = gridftp_load.py
 getenv = True
-output = /dev/null
-error = /dev/null
+output = out.$(PROCESS)
+error = err.$(PROCESS)
 log = log
 should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
