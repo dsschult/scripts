@@ -51,8 +51,8 @@ class Cache:
     def download(self, name):
         logging.info('download %s',name)
         for ending in ('.sha512sum','.sha256sum','.sha1sum','.md5sum'):
-            subprocess.check_call(['globus-url-copy','-rst',os.path.join(self.server,name)+ending,
-                                   'file:'+os.path.join(self.dir,name)+ending])
+            subprocess.call(['globus-url-copy','-rst',os.path.join(self.server,name)+ending,
+                             'file:'+os.path.join(self.dir,name)+ending])
         subprocess.check_call(['globus-url-copy','-rst',os.path.join(self.server,name),
                                'file:'+os.path.join(self.dir,name)])
 
@@ -66,7 +66,8 @@ class Cache:
                                os.path.join(self.server,name),
                                'file:'+fname+'_tmp'])
         try:
-            if cksm(fname) != cksm(fname+'_tmp')
+            if cksm(fname) != cksm(fname+'_tmp'):
+                raise Exception('checksum error')
         finally:
             os.remove(fname+'_tmp')
 
