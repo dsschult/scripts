@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+#!/bin/sh /cvmfs/icecube.opensciencegrid.org/py2-v2/icetray-start
+#METAPROJECT combo/stable
 
 import os
 import math
@@ -7,28 +8,21 @@ import subprocess
 import tempfile
 import string
 import logging
+import hashlib
 
 import tornado.ioloop
 import tornado.gen
 
-def cksm(filename,type='sha512',buffersize=16384,file=True):
+def cksm(filename,buffersize=16384,file=True):
     """Return checksum of file using algorithm specified"""
-    if type not in ('md5','sha1','sha256','sha512'):
-        raise Exception('cannot get checksum for type %r',type)
-
-    try:
-        digest = getattr(hashlib,type)()
-    except:
-        raise Exception('cannot get checksum for type %r',type)
-
-    if file and os.path.exists(filename):
+    digest = hashlib.sha512()
+    if filename and os.path.exists(filename):
         # checksum file contents
-        filed = open(filename)
-        buffer = filed.read(buffersize)
-        while buffer:
-            digest.update(buffer)
+        with open(filename) as filed:
             buffer = filed.read(buffersize)
-        filed.close()
+            while buffer:
+                digest.update(buffer)
+                buffer = filed.read(buffersize)
     else:
         # just checksum the contents of the first argument
         digest.update(filename)
@@ -50,15 +44,35 @@ class Cache:
 
     def download(self, name):
         logging.info('download %s',name)
+        c = None
         for ending in ('.sha512sum','.sha256sum','.sha1sum','.md5sum'):
-            subprocess.call(['globus-url-copy','-rst',os.path.join(self.server,name)+ending,
-                             'file:'+os.path.join(self.dir,name)+ending])
+            cname = name+ending
+            fname = os.path.join(self.dir,cname)
+            subprocess.call(['globus-url-copy','-rst',os.path.join(self.server,cname),
+                             'file:'+fname])
+            try:
+                if ending == '.sha512sum' and os.path.getsize(fname) > 10:
+                    with open(fname) as f:
+                        parts = f.read().split()
+                        if parts[1] != name:
+                            continue
+                        c = parts[0]
+                        break
+            finally:
+                os.remove(fname)
+
         subprocess.check_call(['globus-url-copy','-rst',os.path.join(self.server,name),
                                'file:'+os.path.join(self.dir,name)])
+        if c:
+            # check checksum
+            if c != cksm(os.path.join(self.dir,name)):
+                raise Exception('invalid cksm')
 
     def upload(self, name):
         logging.info('upload %s',name)
         fname = os.path.join(self.dir,name)
+        c = cksm(fname)
+        
         subprocess.check_call(['globus-url-copy','-rst','-cd',
                                'file:'+fname,
                                os.path.join(self.server,name)])
@@ -66,14 +80,38 @@ class Cache:
                                os.path.join(self.server,name),
                                'file:'+fname+'_tmp'])
         try:
-            if cksm(fname) != cksm(fname+'_tmp'):
-                raise Exception('checksum error')
+            if c != cksm(fname+'_tmp'):
+                raise Exception('upload error')
         finally:
             os.remove(fname+'_tmp')
+
+        fname += '.sha512sum'
+        with open(fname,'w') as f:
+            f.write(c+' '+os.path.basename(name))
+        subprocess.check_call(['globus-url-copy','-rst','-cd',
+                               'file:'+fname,
+                               os.path.join(self.server,name)+'.sha512sum'])
+        subprocess.check_call(['globus-url-copy','-rst',
+                               os.path.join(self.server,name)+'.sha512sum',
+                               'file:'+fname+'_tmp'])
+        try:
+            if cksm(fname) != cksm(fname+'_tmp'):
+                raise Exception('checksum upload error')
+        finally:
+            os.remove(fname+'_tmp')
+            os.remove(fname)
+
+    def remove_local(self, name):
+        logging.info('remove_local %s',name)
+        try:
+            os.remove(os.path.join(self.server,name))
+        except:
+            pass
 
     def remove(self, name):
         logging.info('remove %s',name)
         subprocess.call(['uberftp','-rm','-r',os.path.join(self.server,name)])
+        subprocess.call(['uberftp','-rm','-r',os.path.join(self.server,name)+'.sha512sum'])
         try:
             os.remove(os.path.join(self.server,name))
         except:
@@ -94,27 +132,35 @@ class Corsika:
         yield wait(1.12)
         self.cache.create(self.name, 315)
         self.cache.upload(self.name)
+        self.cache.remove_local(self.name)
     @tornado.gen.coroutine
     def generate_bg(self):
         yield wait(0.17)
         self.cache.create(self.name+'_bg', 45)
         self.cache.upload(self.name+'_bg')
+        self.cache.remove_local(self.name+'_bg')
     @tornado.gen.coroutine
     def hits(self):
         self.cache.download(self.name)
         self.cache.download(self.name+'_bg')
+        self.cache.remove_local(self.name)
+        self.cache.remove_local(self.name+'_bg')
         yield wait(3.48)
         self.cache.create(self.name+'_hits', 220)
         self.cache.upload(self.name+'_hits')
+        self.cache.remove_local(self.name+'_hits')
     @tornado.gen.coroutine
     def detector(self):
         self.cache.download(self.name+'_hits')
+        self.cache.remove_local(self.name+'_hits')
         yield wait(0.5)
         self.cache.create(self.name+'_det', 185)
         self.cache.upload(self.name+'_det')
+        self.cache.remove_local(self.name+'_det')
     @tornado.gen.coroutine
     def filtering(self):
         self.cache.download(self.name+'_det')
+        self.cache.remove_local(self.name+'_det')
         yield wait(0.9)
         self.cache.remove(self.name)
         self.cache.remove(self.name+'_bg')
@@ -153,7 +199,7 @@ def submit(args):
                          cwd=os.getcwd())
     p.communicate("""
 executable = gridftp_load.py
-getenv = True
+#getenv = True
 output = out.$(PROCESS)
 error = err.$(PROCESS)
 log = log
@@ -162,8 +208,9 @@ when_to_transfer_output = ON_EXIT
 transfer_input_files = /tmp/x509up_u21458
 env = X509_USER_PROXY=x509up_u21458
 x509userproxy = /tmp/x509up_u21458
-request_disk = 200000000
+request_disk = 30000000
 request_machine_token = 1
+#Requirements = (HAS_CVMFS_icecube_opensciencegrid_org =?= true || HAS_CVMFS_oasis_opensciencegrid_org =?= true || ICECUBE_CVMFS_Exists =?= true)
 arguments = --num 100 --log_level error
 queue %d"""%(args.num//100))
     p.wait()
