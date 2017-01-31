@@ -44,29 +44,8 @@ class Cache:
 
     def download(self, name):
         logging.info('download %s',name)
-        c = None
-        for ending in ('.sha512sum','.sha256sum','.sha1sum','.md5sum'):
-            cname = name+ending
-            fname = os.path.join(self.dir,cname)
-            subprocess.call(['globus-url-copy','-rst',os.path.join(self.server,cname),
-                             'file:'+fname])
-            try:
-                if ending == '.sha512sum' and os.path.getsize(fname) > 10:
-                    with open(fname) as f:
-                        parts = f.read().split()
-                        if parts[1] != name:
-                            continue
-                        c = parts[0]
-                        break
-            finally:
-                os.remove(fname)
-
         subprocess.check_call(['globus-url-copy','-rst',os.path.join(self.server,name),
                                'file:'+os.path.join(self.dir,name)])
-        if c:
-            # check checksum
-            if c != cksm(os.path.join(self.dir,name)):
-                raise Exception('invalid cksm')
 
     def upload(self, name):
         logging.info('upload %s',name)
@@ -85,22 +64,6 @@ class Cache:
         finally:
             os.remove(fname+'_tmp')
 
-        fname += '.sha512sum'
-        with open(fname,'w') as f:
-            f.write(c+' '+os.path.basename(name))
-        subprocess.check_call(['globus-url-copy','-rst','-cd',
-                               'file:'+fname,
-                               os.path.join(self.server,name)+'.sha512sum'])
-        subprocess.check_call(['globus-url-copy','-rst',
-                               os.path.join(self.server,name)+'.sha512sum',
-                               'file:'+fname+'_tmp'])
-        try:
-            if cksm(fname) != cksm(fname+'_tmp'):
-                raise Exception('checksum upload error')
-        finally:
-            os.remove(fname+'_tmp')
-            os.remove(fname)
-
     def remove_local(self, name):
         logging.info('remove_local %s',name)
         try:
@@ -111,7 +74,6 @@ class Cache:
     def remove(self, name):
         logging.info('remove %s',name)
         subprocess.call(['uberftp','-rm','-r',os.path.join(self.server,name)])
-        subprocess.call(['uberftp','-rm','-r',os.path.join(self.server,name)+'.sha512sum'])
         try:
             os.remove(os.path.join(self.server,name))
         except:
@@ -167,6 +129,62 @@ class Corsika:
         self.cache.remove(self.name+'_hits')
         self.cache.remove(self.name+'_det')
 
+class NuGen_Systematics:
+    def __init__(self, cache):
+        self.cache = cache
+        self.name = ''.join(random.sample(string.ascii_letters,24))
+        self.dag = [(self.generate,self.generate_bg),self.hits,
+                    [self.detector for _ in range(4)],
+                    [self.filtering for _ in range(4)]]
+    @tornado.gen.coroutine
+    def generate(self):
+        yield wait(0.015)
+        self.cache.create(self.name, 13)
+        self.cache.upload(self.name)
+        self.cache.remove_local(self.name)
+    @tornado.gen.coroutine
+    def generate_bg(self):
+        yield wait(0.02)
+        self.cache.create(self.name+'_bg', 9.5)
+        self.cache.upload(self.name+'_bg')
+        self.cache.remove_local(self.name+'_bg')
+    @tornado.gen.coroutine
+    def hits(self):
+        self.cache.download(self.name)
+        self.cache.download(self.name+'_bg')
+        self.cache.remove_local(self.name)
+        self.cache.remove_local(self.name+'_bg')
+        yield wait(0.67)
+        for i in range(4):
+            n = self.name+'_hits_%d'%i
+            self.cache.create(n, 6.4)
+            self.cache.upload(n)
+            self.cache.remove_local(n)
+    @tornado.gen.coroutine
+    def detector(self):
+        for i in range(4):
+            n = self.name+'_hits_%d'%i
+            self.cache.download(n)
+            self.cache.remove_local(n)
+        yield wait(0.23)
+        for i in range(4):
+            n = self.name+'_det_%d'%i
+            self.cache.create(n, 4.7)
+            self.cache.upload(n)
+            self.cache.remove_local(n)
+    @tornado.gen.coroutine
+    def filtering(self):
+        for i in range(4):
+            n = self.name+'_det_%d'%i
+            self.cache.download(n)
+            self.cache.remove_local(n)
+        yield wait(0.14)
+        self.cache.remove(self.name)
+        self.cache.remove(self.name+'_bg')
+        for i in range(4):
+            self.cache.remove(self.name+'_hits_%d'%i)
+            self.cache.remove(self.name+'_det_%d'%i)
+
 
 @tornado.gen.coroutine
 def run_dag(job):
@@ -188,8 +206,10 @@ def run_dag(job):
 def run(args):
     cache = Cache('gsiftp://gridftp-scratch.icecube.wisc.edu/local/simprod/')
     ioloop = tornado.ioloop.IOLoop.current()
-    for _ in range(args.num):
-        ioloop.add_callback(run_dag,Corsika(cache))
+    for i in range(args.num):
+        ioloop.call_later(i*60,run_dag,Corsika(cache))
+        for t in range(1,101):
+            ioloop.call_later(i*t*6,run_dag,NuGen_Systematics(cache))
     logging.warn('starting')
     ioloop.start()
     logging.warn('done')
@@ -211,8 +231,8 @@ x509userproxy = /tmp/x509up_u21458
 request_disk = 30000000
 request_machine_token = 1
 #Requirements = (HAS_CVMFS_icecube_opensciencegrid_org =?= true || HAS_CVMFS_oasis_opensciencegrid_org =?= true || ICECUBE_CVMFS_Exists =?= true)
-arguments = --num 100 --log_level error
-queue %d"""%(args.num//100))
+arguments = --num 50 --log_level error
+queue %d"""%(args.num//50))
     p.wait()
 
 def main():
