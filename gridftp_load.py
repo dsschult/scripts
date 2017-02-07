@@ -73,7 +73,7 @@ class Cache:
 
     def remove(self, name):
         logging.info('remove %s',name)
-        subprocess.call(['uberftp','-rm','-r',os.path.join(self.server,name)])
+        #subprocess.call(['uberftp','-rm','-r',os.path.join(self.server,name)])
         try:
             os.remove(os.path.join(self.server,name))
         except:
@@ -205,6 +205,7 @@ def run_dag(job):
 
 def run(args):
     cache = Cache('gsiftp://gridftp-scratch.icecube.wisc.edu/local/simprod/')
+    #cache = Cache('gsiftp://gridftp-3.icecube.wisc.edu/mnt/lfs4/simprod/dagtemp2/test/')
     ioloop = tornado.ioloop.IOLoop.current()
     for i in range(args.num):
         ioloop.call_later(i*60,run_dag,Corsika(cache))
