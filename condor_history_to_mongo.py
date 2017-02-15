@@ -21,6 +21,7 @@ if options.mongo:
 db = MongoClient(**mongo_args).condor
 if options.clear:
     db.condor_history.drop()
+    db.condor_history.create_index("GlobalJobId")
     db.condor_history.create_index("JobStatus")
 
 def get_type(val):
@@ -45,7 +46,7 @@ good_keys = set(['JobStatus','Cmd','Owner','AccountingGroup',
 'ResidentSetSize_RAW',
 'RequestCpus','Requestgpus','RequestMemory','RequestDisk',
 'NumJobStarts','NumShadowStarts',
-'ClusterId','ProcId','RemoteWallClockTime',
+'GlobalJobId','ClusterId','ProcId','RemoteWallClockTime',
 'ExitBySignal','ExitCode','ExitSignal','ExitStatus',
 'CumulativeSlotTime','LastRemoteHost',
 'QDate','JobStartDate','JobCurrentStartDate','EnteredCurrentStatus',
@@ -58,6 +59,10 @@ def filter_keys(data):
         if k not in good_keys:
             del data[k]
 
+def insert(data):
+    if not db.condor_history.find_one({'GlobalJobId':data['GlobalJobId']}):
+        db.condor_history.insert_one(entry)
+
 for path in args:
     for filename in glob.iglob(path):
         with (gzip.open(filename) if filename.endswith('.gz') else open(filename)) as f:
@@ -65,7 +70,7 @@ for path in args:
             for line in f.readlines():
                 if line.startswith('***'):
                     filter_keys(entry)
-                    db.condor_history.insert_one(entry)
+                    insert(entry)
                     entry = {}
                 else:
                     name,value = line.split('=',1)
