@@ -40,7 +40,6 @@ def get_type(val):
             return val
 
 good_keys = set(['JobStatus','Cmd','Owner','AccountingGroup',
-'StartdPrinciple',
 'ImageSize_RAW','DiskUsage_RAW','ExecutableSize_RAW',
 'BytesSent','BytesRecvd',
 'ResidentSetSize_RAW',
