@@ -52,7 +52,7 @@ good_keys = set(['JobStatus','Cmd','Owner','AccountingGroup',
 'QDate','JobStartDate','JobCurrentStartDate','EnteredCurrentStatus',
 'RemoteUserCpu','RemoteSysCpu','CompletionDate',
 'CommittedTime','RemoteWallClockTime',
-'MATCH_EXP_JOBGLIDEIN_ResourceName','DAGManJobId'])
+'MATCH_EXP_JOBGLIDEIN_ResourceName','StartdPrincipal','DAGManJobId'])
 
 def filter_keys(data):
     for k in data.keys():
