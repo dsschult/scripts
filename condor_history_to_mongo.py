@@ -60,8 +60,16 @@ def filter_keys(data):
             del data[k]
 
 def insert(data):
-    if not db.condor_history.find_one({'GlobalJobId':data['GlobalJobId']}):
+    ret = db.condor_history.find_one({'GlobalJobId':data['GlobalJobId']})
+    if not ret:
         db.condor_history.insert_one(entry)
+    else:
+        diff = {}
+        for k in set(data).difference(ret):
+            diff[k] = data[k]
+        if diff:
+            db.condor_history.update_one({'GlobalJobId':data['GlobalJobId']},
+                                         {'$set':diff})
 
 for path in args:
     for filename in glob.iglob(path):
