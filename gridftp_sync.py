@@ -42,7 +42,7 @@ class CondorPool():
                 self._submit(self.queue.pop())
             time.sleep(1)
 
-pool = CondorPool(100)
+pool = CondorPool(300)
 
 for root,dirs,files in os.walk(source):
     for f in files:
