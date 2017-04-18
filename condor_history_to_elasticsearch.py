@@ -24,6 +24,30 @@ good_keys = set(['JobStatus','Cmd','Owner','AccountingGroup',
 'LastJobStatus','LastHoldReason','LastRemotePool',
 ])
 
+key_types = {
+    'number': ['AutoClusterId','BlockReadBytes','BlockReadKbytes','BlockReads',
+               'BlockWriteBytes','BlockWriteKbytes','BufferBlockSize','BufferSize',
+               'BytesRecvd','BytesSent','ClusterId','CommittedSlotTime','CommittedSuspensionTime',
+               'CommittedTime','CompletionDate','CoreSize','CumulativeSlotTime','CumulativeSuspensionTime',
+               'CurrentHosts','DiskUsage','DiskUsage_RAW','EnteredCurrentStatus','ExecutableSize',
+               'ExecutableSize_RAW','ExitCode','ExitStatus','ImageSize','ImageSize_RAW',
+               'JobCurrentStartDate','JobCurrentStartExecutingDate','JobFinishedHookDone',
+               'JobLeaseDuration','JobNotification','JobPrio','JobRunCount','JobStartDate',
+               'JobStatus','JobUniverse','LastJobLeaseRenewal','LastJobStatus','LastMatchTime',
+               'LastSuspensionTime','LocalSysCpu','LocalUserCpu','MachineAttrCpus0','MachineAttrSlotWeight0',
+               'MaxHosts','MinHosts','NumCkpts','NumCkpts_RAW','NumJobMatches','NumJobStarts',
+               'NumRestarts','NumShadowStarts','NumSystemHolds','OrigMaxHosts','ProcId','QDate',
+               'Rank','RecentBlockReadBytes','RecentBlockReadKbytes','RecentBlockReads',
+               'RecentBlockWriteBytes','RecentBlockWriteKbytes','RecentBlockWrites',
+               'RecentStatsLifetimeStarter','RecentStatsTickTimeStarter','RecentWindowMaxStarter',
+               'RemoteSysCpu','RemoteUserCpu','RemoteWallClockTime','RequestCpus','RequestDisk',
+               'RequestMemory','ResidentSetSize','ResidentSetSize_RAW','StatsLastUpdateTimeStarter',
+               'StatsLifetimeStarter','TotalSuspensions','TransferInputSizeMB'],
+    'bool': ['EncryptExecuteDirectory','ExitBySignal','LeaveJobInQueue','NiceUser','OnExitHold',
+             'OnExitRemove','PeriodicHold','PeriodicRelease','StreamErr','StreamOut',
+             'TerminationPending','TransferIn','WantCheckpoint','WantRemoteIO',
+             'WantRemoteSyscalls','wantglidein','wantrhel6'],
+}
 
 class ElasticClient(object):
     def __init__(self, hostname, basename):
@@ -229,6 +253,26 @@ def filter_keys(data):
         if k not in good_keys:
             del data[k]
 
+
+def fix_types(data):
+    for t in key_types:
+        if t == 'string':
+            operation = str
+        elif t == 'number':
+            operation = float
+        elif t == 'bool':
+            operation = bool
+        else:
+            raise Exception('unknown type %r'%t)
+        for k in key_types[t]:
+            if k not in data:
+                continue
+            try:
+                data[k] = operation(data[k])
+            except:
+                logging.info("dropping bad key %r", k, exc_info=True)
+                del data[k]
+
 def insert(data):
     # fix site
     if 'MATCH_EXP_JOBGLIDEIN_ResourceName' not in data:
@@ -264,6 +308,7 @@ for path in args:
             for line in f.readlines():
                 if line.startswith('***'):
                     #filter_keys(entry)
+                    fix_types(entry)
                     insert(entry)
                     entry = {}
                 else:
