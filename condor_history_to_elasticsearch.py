@@ -3,26 +3,59 @@ import os
 import glob
 import gzip
 from optparse import OptionParser
-from datetime import datetime
+from datetime import datetime,timedelta
+import time
 import logging
+
+import classad
 
 import requests
 
-good_keys = set(['JobStatus','Cmd','Owner','AccountingGroup',
-'ImageSize_RAW','DiskUsage_RAW','ExecutableSize_RAW',
-'BytesSent','BytesRecvd',
-'ResidentSetSize_RAW',
-'RequestCpus','Requestgpus','RequestMemory','RequestDisk',
-'NumJobStarts','NumShadowStarts',
-'GlobalJobId','ClusterId','ProcId',
-'ExitBySignal','ExitCode','ExitSignal','ExitStatus',
-'CumulativeSlotTime','LastRemoteHost',
-'QDate','JobStartDate','JobCurrentStartDate','EnteredCurrentStatus',
-'RemoteUserCpu','RemoteSysCpu','CompletionDate',
-'CommittedTime','RemoteWallClockTime',
-'MATCH_EXP_JOBGLIDEIN_ResourceName','StartdPrincipal','DAGManJobId',
-'LastJobStatus','LastHoldReason','LastRemotePool',
-])
+now = datetime.utcnow()
+zero = datetime.utcfromtimestamp(0).isoformat()
+
+good_keys = {
+    'JobStatus':0.,
+    'Cmd':'',
+    'Owner':'',
+    'AccountingGroup':'',
+    'ImageSize_RAW':0.,
+    'DiskUsage_RAW':0.,
+    'ExecutableSize_RAW':0.,
+    'BytesSent':0.,
+    'BytesRecvd':0.,
+    'ResidentSetSize_RAW':0.,
+    'RequestCpus':1.,
+    'Requestgpus':0.,
+    'RequestMemory':1000.,
+    'RequestDisk':1000000.,
+    'NumJobStarts':0.,
+    'NumShadowStarts':0.,
+    'GlobalJobId':'',
+    'ClusterId':0.,
+    'ProcId':0.,
+    'ExitBySignal':False,
+    'ExitCode':0.,
+    'ExitSignal':0.,
+    'ExitStatus':0.,
+    'CumulativeSlotTime':0.,
+    'LastRemoteHost':'',
+    'QDate':now,
+    'JobStartDate':now,
+    'JobCurrentStartDate':now,
+    'EnteredCurrentStatus':now,
+    'RemoteUserCpu':0.,
+    'RemoteSysCpu':0.,
+    'CompletionDate':now,
+    'CommittedTime':0.,
+    'RemoteWallClockTime':0.,
+    'MATCH_EXP_JOBGLIDEIN_ResourceName':'other',
+    'StartdPrincipal':'',
+    'DAGManJobId':0.,
+    'LastJobStatus':0.,
+    'LastHoldReason':'',
+    'LastRemotePool':'',
+}
 
 key_types = {
     'number': ['AutoClusterId','BlockReadBytes','BlockReadKbytes','BlockReads',
@@ -32,7 +65,7 @@ key_types = {
                'CurrentHosts','DiskUsage','DiskUsage_RAW','EnteredCurrentStatus','ExecutableSize',
                'ExecutableSize_RAW','ExitCode','ExitStatus','ImageSize','ImageSize_RAW',
                'JobCurrentStartDate','JobCurrentStartExecutingDate','JobFinishedHookDone',
-               'JobLeaseDuration','JobNotification','JobPrio','JobRunCount','JobStartDate',
+               'JobLeaseDuration','JobLeaseExpiration','JobNotification','JobPrio','JobRunCount','JobStartDate',
                'JobStatus','JobUniverse','LastJobLeaseRenewal','LastJobStatus','LastMatchTime',
                'LastSuspensionTime','LocalSysCpu','LocalUserCpu','MachineAttrCpus0','MachineAttrSlotWeight0',
                'MaxHosts','MinHosts','NumCkpts','NumCkpts_RAW','NumJobMatches','NumJobStarts',
@@ -41,8 +74,9 @@ key_types = {
                'RecentBlockWriteBytes','RecentBlockWriteKbytes','RecentBlockWrites',
                'RecentStatsLifetimeStarter','RecentStatsTickTimeStarter','RecentWindowMaxStarter',
                'RemoteSysCpu','RemoteUserCpu','RemoteWallClockTime','RequestCpus','RequestDisk',
-               'RequestMemory','ResidentSetSize','ResidentSetSize_RAW','StatsLastUpdateTimeStarter',
-               'StatsLifetimeStarter','TotalSuspensions','TransferInputSizeMB'],
+               'RequestMemory','Requestgpus','ResidentSetSize','ResidentSetSize_RAW',
+               'StatsLastUpdateTimeStarter','StatsLifetimeStarter','TotalSuspensions',
+               'TransferInputSizeMB'],
     'bool': ['EncryptExecuteDirectory','ExitBySignal','LeaveJobInQueue','NiceUser','OnExitHold',
              'OnExitRemove','PeriodicHold','PeriodicRelease','StreamErr','StreamOut',
              'TerminationPending','TransferIn','WantCheckpoint','WantRemoteIO',
@@ -58,13 +92,16 @@ class ElasticClient(object):
         # concat hostname and basename
         self.hostname = hostname+'/'+basename+'/'
     def put(self, name, index_name, data):
+        r = None
         try:
             r = self.session.put(self.hostname+name+'/'+index_name, json=data)
             r.raise_for_status()
         except Exception:
             logging.warn('cannot put %s/%s to elasticsearch at %r', name,
                          index_name, self.hostname, exc_info=True)
-            logging.warn('%r',r.content)
+            if r:
+                logging.warn('%r',r.content)
+            raise
 
 parser = OptionParser('usage: %prog [options] history_files')
 parser.add_option('-a','--address',help='elasticsearch address')
@@ -72,6 +109,8 @@ parser.add_option('-b','--basename',default='condor',
                   help='collection basename (default condor)')
 parser.add_option('-n','--indexname',default='job_history',
                   help='index name (default job_history)')
+parser.add_option('--collectors', default=False, action='store_true',
+                  help='Args are collector addresses, not files')
 (options, args) = parser.parse_args()
 if not args:
     parser.error('no condor history files')
@@ -82,7 +121,7 @@ client = ElasticClient(options.address, options.basename)
 reserved_ips = {
     '18.12': 'MIT',
     '23.22': 'AWS',
-    '35.9': 'AGLT2',
+    '35.9': 'MSU',
     '40.78': 'Azure',
     '40.112': 'Azure',
     '50.16': 'AWS',
@@ -128,7 +167,7 @@ reserved_ips = {
     '131.215': 'CIT_CMS_T2',
     '131.225': 'USCMS-FNAL-WC1',
     '132.206': 'CA-MCGILL-CLUMEQ-T2',
-    '133.82': 'Japan',
+    '133.82': 'Chiba',
     '134.93': 'mainz',
     '136.145': 'osgconnect',
     '137.99': 'UConn-OSG',
@@ -156,6 +195,7 @@ reserved_ips = {
     '193.190': 'T2B_BE_IIHE',
     '198.32': 'osgconnect',
     '198.48': 'Hyak',
+    '198.202': 'Comet',
     '200.136': 'SPRACE',
     '200.145': 'SPRACE',
     '206.12': 'CA-MCGILL-CLUMEQ-T2',
@@ -198,12 +238,14 @@ reserved_domains = {
     'lidocluster.hp': 'LIDO_Dortmund',
     'math.wisc.edu': 'MATH_WISC',
     'mwt2.org': 'MWT2',
+    'msu.edu': 'MSU',
     'nut.bu.edu': 'Boston',
     'palmetto.clemson.edu': 'Clemson-Palmetto',
     'panther.net': 'FLTECH',
     'phys.uconn.edu': 'UConn-OSG',
     'rcac.purdue.edu': 'Purdue-Hadoop',
     'research.northwestern.edu': 'NUMEP-OSG',
+    'sdsc.edu': 'Comet',
     'stat.wisc.edu': 'CHTC',
     't2.ucsd.edu': 'UCSDT2',
     'tier3.ucdavis.edu':'UCD',
@@ -213,6 +255,44 @@ reserved_domains = {
     'wisc.cloudlab.us': 'CLOUD_WISC',
     'wisc.edu': 'WISC',
     'zeuthen.desy.de': 'DESY-ZN',
+}
+
+site_names = {
+    'DESY-ZN': 'DE-DESY',
+    'DESY-HH': 'DE-DESY',
+    'DESY': 'DE-DESY',
+    'Brussels': 'BE-IIHE',
+    'T2B_BE_IIHE': 'BE-IIHE',
+    'BEgrid-ULB-VUB': 'BE-IIHE',
+    'Guillimin': 'CA-McGill',
+    'CA-MCGILL-CLUMEQ-T2': 'CA-McGill',
+    'mainz': 'DE-Mainz',
+    'mainzgrid': 'DE-Mainz',
+    'CA-SCINET-T2': 'CA-Toronto',
+    'Alberta': 'CA-Alberta',
+    'parallel': 'CA-Alberta',
+    'jasper': 'CA-Alberta',
+    'RWTH-Aachen': 'DE-Aachen',
+    'aachen': 'DE-Aachen',
+    'wuppertalprod': 'DE-Wuppertal',
+    'Uppsala': 'SE-Uppsala',
+    'Bartol': 'US-Bartol',
+    'UNI-DORTMUND': 'DE-Dortmund',
+    'LIDO_Dortmund': 'DE-Dortmund',
+    'PHIDO_Dortmund': 'DE-Dortmund',
+    'UKI-NORTHGRID-MAN-HEP': 'UK-Manchester',
+    'UKI-LT2-QMUL': 'UK-Manchester',
+    'Bridges': 'XSEDE-Bridges',
+    'Comet': 'XSEDE-Comet',
+    'HOSTED_STANFORD': 'XSEDE-XStream',
+    'Xstream': 'XSEDE-XStream',
+    'NPX': 'US-NPX',
+    'GZK': 'US-GZK',
+    'CHTC': 'US-CHTC',
+    'Marquette': 'US-Marquette',
+    'UMD': 'US-UMD',
+    'Japan': 'JP-Chiba',
+    'Chiba': 'JP-Chiba',
 }
 
 def get_site_from_domain(hostname):
@@ -252,7 +332,26 @@ def filter_keys(data):
     for k in data.keys():
         if k not in good_keys:
             del data[k]
-
+    for k in good_keys:
+        if k not in data:
+            data[k] = good_keys[k]
+        if isinstance(good_keys[k],bool):
+            try:
+                data[k] = bool(data[k])
+            except:
+                data[k] = good_keys[k]
+        elif isinstance(good_keys[k],(float,int)):
+            try:
+                data[k] = float(data[k])
+            except:
+                data[k] = good_keys[k]
+        elif isinstance(good_keys[k],datetime):
+            try:
+                data[k] = datetime.utcfromtimestamp(data[k]).isoformat()
+            except:
+                data[k] = zero
+        else:
+            data[k] = str(data[k])
 
 def fix_types(data):
     for t in key_types:
@@ -273,9 +372,22 @@ def fix_types(data):
                 logging.info("dropping bad key %r", k, exc_info=True)
                 del data[k]
 
+def is_bad_site(data):
+    if 'MATCH_EXP_JOBGLIDEIN_ResourceName' not in data:
+        return True
+    site = data['MATCH_EXP_JOBGLIDEIN_ResourceName']
+    if site in ('other','osgconnect','xsede-osg','WIPAC','wipac'):
+        return True
+    if '.' in site:
+        return True
+    if site.startswith('gzk9000') or site.startswith('gzk-'):
+        return True
+    return False
+
 def insert(data):
     # fix site
-    if 'MATCH_EXP_JOBGLIDEIN_ResourceName' not in data:
+    bad_site = is_bad_site(data)
+    if bad_site:
         if 'LastRemoteHost' in data:
             site = get_site_from_domain(data['LastRemoteHost'].split('@')[-1])
             if site:
@@ -285,34 +397,72 @@ def insert(data):
                 if site:
                     data['MATCH_EXP_JOBGLIDEIN_ResourceName'] = site
     # add completion date
-    if 'CompletionDate' in data:
-        data['date'] = datetime.utcfromtimestamp(data['CompletionDate'])
-    elif 'EnteredCurrentStatus' in data:
-        data['date'] = datetime.utcfromtimestamp(data['EnteredCurrentStatus'])
+    if data['CompletionDate'] != zero and data['CompletionDate']:
+        data['date'] = data['CompletionDate']
+    elif data['EnteredCurrentStatus'] != zero and data['EnteredCurrentStatus']:
+        data['date'] = data['EnteredCurrentStatus']
     else:
-        data['date'] = datetime.utcnow()
-    data['date'] = data['date'].isoformat()
+        data['date'] = datetime.utcnow().isoformat()
     # add used time
     if 'RemoteWallClockTime' in data:
         data['walltimehrs'] = data['RemoteWallClockTime']/3600.
     else:
         data['walltimehrs'] = 0.
+    # add site
+    if data['MATCH_EXP_JOBGLIDEIN_ResourceName'] in site_names:
+        data['site'] = site_names[data['MATCH_EXP_JOBGLIDEIN_ResourceName']]
+    else:
+        data['site'] = 'other'
     # upload
     index_id = data['GlobalJobId'].replace('#','-').replace('.','-')
-    client.put(options.indexname,index_id,data)
+    try:
+        client.put(options.indexname,index_id,data)
+    except Exception:
+        logging.warn('%r',data)
 
-for path in args:
-    for filename in glob.iglob(path):
-        with (gzip.open(filename) if filename.endswith('.gz') else open(filename)) as f:
-            entry = {}
-            for line in f.readlines():
-                if line.startswith('***'):
-                    #filter_keys(entry)
-                    fix_types(entry)
-                    insert(entry)
-                    entry = {}
-                else:
-                    name,value = line.split('=',1)
-                    entry[name.strip()] = get_type(value.strip())
-        print('.',end='')
+if options.collectors:
+    # connect to condor collectors and schedds to pull history directly
+    import htcondor
+    start_dt = datetime.now()-timedelta(minutes=30)
+    start_stamp = time.mktime(start_dt.timetuple())
+    for coll_address in args:
+        coll = htcondor.Collector(coll_address)
+        schedd_ads = coll.locateAll(htcondor.DaemonTypes.Schedd)
+        for schedd_ad in schedd_ads:
+            print('getting history from', schedd_ad['Name'])
+            schedd = htcondor.Schedd(schedd_ad)
+            for entry in schedd.history('EnteredCurrentStatus >= {0}'.format(start_stamp),[],10000):
+                ret = {}
+                for k in entry.keys():
+                    try:
+                        ret[k] = entry.eval(k)
+                    except TypeError:
+                        ret[k] = entry[k]
+                filter_keys(ret)
+                #fix_types(ret)
+                insert(ret)
+
+else:
+    # get history from files
+    for path in args:
+        for filename in glob.iglob(path):
+            with (gzip.open(filename) if filename.endswith('.gz') else open(filename)) as f:
+                entry = ''
+                for line in f.readlines():
+                    if line.startswith('***'):
+                        c = classad.parseOne(entry)
+                        ret = {}
+                        for k in c.keys():
+                            try:
+                                ret[k] = c.eval(k)
+                            except TypeError:
+                                ret[k] = c[k]
+                        filter_keys(ret)
+                        #fix_types(ret)
+                        insert(ret)
+                        entry = ''
+                    else:
+                        entry += line+'\n'
+                        #entry[name.strip()] = get_type(value.strip())
+            print('.',end='')
 
