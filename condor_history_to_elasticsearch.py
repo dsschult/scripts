@@ -423,7 +423,7 @@ def insert(data):
 if options.collectors:
     # connect to condor collectors and schedds to pull history directly
     import htcondor
-    start_dt = datetime.now()-timedelta(minutes=30)
+    start_dt = datetime.now()-timedelta(minutes=10)
     start_stamp = time.mktime(start_dt.timetuple())
     for coll_address in args:
         coll = htcondor.Collector(coll_address)
@@ -431,7 +431,8 @@ if options.collectors:
         for schedd_ad in schedd_ads:
             print('getting history from', schedd_ad['Name'])
             schedd = htcondor.Schedd(schedd_ad)
-            for entry in schedd.history('EnteredCurrentStatus >= {0}'.format(start_stamp),[],10000):
+            i = 0
+            for i,entry in enumerate(schedd.history('EnteredCurrentStatus >= {0}'.format(start_stamp),[],10000)):
                 ret = {}
                 for k in entry.keys():
                     try:
@@ -441,6 +442,7 @@ if options.collectors:
                 filter_keys(ret)
                 #fix_types(ret)
                 insert(ret)
+            print('   got',i,'entries')
 
 else:
     # get history from files
