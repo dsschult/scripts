@@ -7,8 +7,8 @@ import os
 import time
 import subprocess
 
-source = '/mnt/lfs4/simprod/dagtemp2/20009'
-dest = 'gsiftp://gridftp-scratch.icecube.wisc.edu/local/simprod/20009'
+source = 'gsiftp://xcache-11.t2.ucsd.edu/data/ceph/gridftp/prod-tmp/20852/'
+dest = 'gsiftp://gridftp-scratch.icecube.wisc.edu/mnt/tank/simprod/20852/'
 
 class CondorPool():
     # make a 'threadpool' using HTCondor
@@ -22,6 +22,7 @@ class CondorPool():
                       '-a','request_machine_token=1',
                       '-a','should_transfer_files=YES',
                       '-a','transfer_input_files=/tmp/x509up_u21458',
+                      '-a','transfer_output_files=""',
                       '-a','env=X509_USER_PROXY=x509up_u21458',
                       '-a','x509userproxy=/tmp/x509up_u21458',
                       cmd]
@@ -55,7 +56,10 @@ if source.startswith('file://'):
             cmd = 'globus-url-copy -sync -cd -rst %s %s'%(s,d)
             pool.apply(cmd)
 else:
-    for line in subprocess.check_call(['uberftp','-ls',source]):
+    for line in subprocess.check_output(['uberftp','-ls',source]).split('\n'):
+        line = line.strip()
+        if not line:
+            continue
         filename = line.split()[-1]
         if filename in ('.','..'):
             continue
