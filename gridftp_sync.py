@@ -44,10 +44,27 @@ class CondorPool():
 
 pool = CondorPool(300)
 
-for root,dirs,files in os.walk(source):
-    for f in files:
-        s = os.path.join(root,f)
-        d = s.replace(source,dest)
-        cmd = 'globus-url-copy -sync -cd -rst file://%s %s'%(s,d)
+if source.startswith('file://'):
+    for root,dirs,files in os.walk(source[6:]):
+        for f in files:
+            filename = os.path.join(root,f).replace(source[6:],'')
+            while filename.startswith('/'):
+                filename = filename[1:]
+            s = os.path.join(source, filename)
+            d = os.path.join(dest, filename)
+            cmd = 'globus-url-copy -sync -cd -rst %s %s'%(s,d)
+            pool.apply(cmd)
+else:
+    for line in subprocess.check_call(['uberftp','-ls',source]):
+        filename = line.split()[-1]
+        if filename in ('.','..'):
+            continue
+        s = os.path.join(source,filename)
+        d = os.path.join(dest,filename)
+        if d.startswith('file://'):
+            cmd = 'globus-url-copy -sync -cd -rst %s %s'%(s,d)
+        else:
+            # third party not supported, so do download->tmp->upload
+            cmd = 'globus-url-copy -sync -cd -rst %s file://$_CONDOR_SCRATCH_DIR/tmp; globus_url_copy -sync -cd -rst file://$_CONDOR_SCRATCH_DIR/tmp %s'%(s,d)
         pool.apply(cmd)
 pool.join()
