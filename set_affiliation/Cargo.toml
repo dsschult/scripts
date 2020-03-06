@@ -9,3 +9,5 @@ edition = "2018"
 [dependencies]
 ldap3 = "0.6"
 native-tls = "0.2"
+clap = "2.33"
+users = "0.9"
